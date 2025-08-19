@@ -1,133 +1,333 @@
-local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 
-local player = Players.LocalPlayer
-local settings = {
-    TeleportKey = Enum.KeyCode.LeftControl,
-    HeightOffset = 2.5,
-    TeleportEffect = true,
-    EffectDuration = 0.8,
-    SmoothTeleport = true,
-    TweenDuration = 0.3,
-    InfiniteDistance = true  -- Новая настройка бесконечной дистанции
+-- Настройки по умолчанию
+local SETTINGS = {
+    AIM_KEY = Enum.KeyCode.L,
+    LOCK_DISTANCE = 100,
+    SMOOTHNESS = 0.2,
+    IGNORE_WALLS = true,
+    SHOW_TARGET = true,
+    SHOW_HITBOXES = false, -- Новая настройка для хитбоксов
+    FOV = 60
 }
 
--- Кэшируем часто используемые объекты
-local camera = workspace.CurrentCamera
-local character, humanoid, rootPart
+-- Состояние системы
+local AIM_ENABLED = false
+local target = nil
+local gui = nil
+local aimIndicator = nil
+local hitboxes = {} -- Таблица для хранения хитбоксов
+local dragging = false
+local dragStartPos = Vector2.new(0, 0)
+local frameStartPos = Vector2.new(0, 0)
 
--- Авто-обновление ссылок на персонажа
-local function updateCharacterReferences()
-    character = player.Character
-    if character then
-        humanoid = character:FindFirstChildOfClass("Humanoid")
-        rootPart = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+-- Создание 3D индикатора цели
+local function createAimIndicator()
+    if aimIndicator then aimIndicator:Destroy() end
+    
+    aimIndicator = Instance.new("Part")
+    aimIndicator.Name = "AimLockTarget"
+    aimIndicator.Size = Vector3.new(1.5, 1.5, 1.5)
+    aimIndicator.Shape = Enum.PartType.Ball
+    aimIndicator.Material = Enum.Material.Neon
+    aimIndicator.Color = Color3.fromRGB(255, 50, 50)
+    aimIndicator.Transparency = 0.7
+    aimIndicator.Anchored = true
+    aimIndicator.CanCollide = false
+    aimIndicator.Parent = workspace
+end
+
+-- Создание/удаление хитбоксов
+local function updateHitboxes()
+    for player, parts in pairs(hitboxes) do
+        for _, part in pairs(parts) do
+            part:Destroy()
+        end
+    end
+    hitboxes = {}
+
+    if not SETTINGS.SHOW_HITBOXES then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Players.LocalPlayer and player.Character then
+            hitboxes[player] = {}
+            for _, part in ipairs(player.Character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    local hitbox = Instance.new("BoxHandleAdornment")
+                    hitbox.Name = "HitboxVisualizer"
+                    hitbox.Adornee = part
+                    hitbox.AlwaysOnTop = true
+                    hitbox.ZIndex = 10
+                    hitbox.Size = part.Size
+                    hitbox.Transparency = 0.7
+                    hitbox.Color3 = Color3.fromRGB(0, 255, 255)
+                    hitbox.Parent = part
+                    table.insert(hitboxes[player], hitbox)
+                end
+            end
+        end
     end
 end
 
--- Создаем эффект телепортации
-local function createTeleportEffect(position)
-    if not settings.TeleportEffect then return end
+-- Поиск цели с учетом FOV
+local function findTarget()
+    local closestTarget = nil
+    local closestAngle = math.rad(SETTINGS.FOV)
+    local closestDistance = SETTINGS.LOCK_DISTANCE
     
-    local effect = Instance.new("Part")
-    effect.Size = Vector3.new(3, 0.2, 3)
-    effect.Position = position - Vector3.new(0, settings.HeightOffset-0.1, 0)
-    effect.Anchored = true
-    effect.CanCollide = false
-    effect.Material = Enum.Material.Neon
-    effect.Color = Color3.fromHSV(tick()%5/5, 1, 1)
-    effect.Transparency = 0.5
-    effect.TopSurface = Enum.SurfaceType.Smooth
-    effect.BottomSurface = Enum.SurfaceType.Smooth
+    local localPlayer = Players.LocalPlayer
+    if not localPlayer.Character then return nil end
     
-    local ring = effect:Clone()
-    ring.Size = Vector3.new(2, 0.2, 2)
-    ring.Position = effect.Position + Vector3.new(0, 0.5, 0)
+    local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
     
-    effect.Parent = workspace
-    ring.Parent = workspace
+    local camera = workspace.CurrentCamera
+    local cameraPos = camera.CFrame.Position
+    local cameraLook = camera.CFrame.LookVector
     
-    game:GetService("Debris"):AddItem(effect, settings.EffectDuration)
-    game:GetService("Debris"):AddItem(ring, settings.EffectDuration)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character then
+            local targetHrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if targetHrp then
+                local direction = (targetHrp.Position - cameraPos).Unit
+                local angle = math.acos(cameraLook:Dot(direction))
+                local distance = (targetHrp.Position - hrp.Position).Magnitude
+                
+                if angle <= closestAngle and distance <= closestDistance then
+                    if SETTINGS.IGNORE_WALLS then
+                        closestTarget = targetHrp
+                        closestAngle = angle
+                        closestDistance = distance
+                    else
+                        local raycastParams = RaycastParams.new()
+                        raycastParams.FilterDescendantsInstances = {localPlayer.Character}
+                        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+                        
+                        local raycastResult = workspace:Raycast(cameraPos, direction * distance, raycastParams)
+                        if not raycastResult then
+                            closestTarget = targetHrp
+                            closestAngle = angle
+                            closestDistance = distance
+                        end
+                    end
+                end
+            end
+        end
+    end
     
-    -- Анимация исчезновения
-    for _, part in pairs({effect, ring}) do
-        local tween = TweenService:Create(
-            part,
-            TweenInfo.new(settings.EffectDuration, Enum.EasingStyle.Quad),
-            {Transparency = 1}
-        )
-        tween:Play()
+    return closestTarget
+end
+
+-- Плавное наведение камеры
+local function aimAtTarget()
+    while AIM_ENABLED and RunService.RenderStepped:Wait() do
+        target = findTarget()
+        
+        if target then
+            local camera = workspace.CurrentCamera
+            local newCFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
+            camera.CFrame = camera.CFrame:Lerp(newCFrame, SETTINGS.SMOOTHNESS)
+            
+            if SETTINGS.SHOW_TARGET then
+                if not aimIndicator then
+                    createAimIndicator()
+                end
+                aimIndicator.Position = target.Position + Vector3.new(0, 2, 0)
+                aimIndicator.Transparency = 0.3
+            end
+        elseif aimIndicator then
+            aimIndicator.Transparency = 1
+        end
     end
 end
 
--- Плавная телепортация
-local function smoothTeleport(cframe)
-    if not settings.SmoothTeleport or not humanoid then
-        rootPart.CFrame = cframe
-        return
-    end
+-- Создание интерфейса
+local function createGUI()
+    if gui then gui:Destroy() end
     
-    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-    local tween = TweenService:Create(
-        rootPart,
-        TweenInfo.new(settings.TweenDuration, Enum.EasingStyle.Quad),
-        {CFrame = cframe}
-    )
-    tween:Play()
+    gui = Instance.new("ScreenGui")
+    gui.Name = "AimLockUI"
+    gui.Parent = CoreGui
     
-    tween.Completed:Wait()
-    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Size = UDim2.new(0, 320, 0, 250) -- Увеличили размер для новых элементов
+    mainFrame.Position = UDim2.new(0.5, -160, 0.5, -125)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = gui
+    
+    local titleBar = Instance.new("Frame")
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    
+    local title = Instance.new("TextLabel")
+    title.Text = "AIMLOCK CONTROL PANEL"
+    title.Size = UDim2.new(1, 0, 1, 0)
+    title.BackgroundTransparency = 1
+    title.TextColor3 = Color3.fromRGB(255, 80, 80)
+    title.Font = Enum.Font.GothamBold
+    title.Parent = titleBar
+    
+    -- Кнопка включения
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Text = "TOGGLE AIMLOCK (L)"
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0.15, 0)
+    toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.Font = Enum.Font.Gotham
+    toggleBtn.Parent = mainFrame
+    
+    -- Переключатель Wallhack
+    local wallhackBtn = Instance.new("TextButton")
+    wallhackBtn.Text = "WALLHACK: " .. (SETTINGS.IGNORE_WALLS and "ON" or "OFF")
+    wallhackBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    wallhackBtn.Position = UDim2.new(0.05, 0, 0.35, 0)
+    wallhackBtn.BackgroundColor3 = SETTINGS.IGNORE_WALLS and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+    wallhackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    wallhackBtn.Font = Enum.Font.Gotham
+    wallhackBtn.Parent = mainFrame
+    
+    -- Переключатель хитбоксов
+    local hitboxBtn = Instance.new("TextButton")
+    hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
+    hitboxBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    hitboxBtn.Position = UDim2.new(0.05, 0, 0.55, 0)
+    hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+    hitboxBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hitboxBtn.Font = Enum.Font.Gotham
+    hitboxBtn.Parent = mainFrame
+    
+    -- Слайдер дистанции
+    local distanceSlider = Instance.new("TextLabel")
+    distanceSlider.Text = "DISTANCE: " .. SETTINGS.LOCK_DISTANCE
+    distanceSlider.Size = UDim2.new(0.9, 0, 0, 30)
+    distanceSlider.Position = UDim2.new(0.05, 0, 0.75, 0)
+    distanceSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    distanceSlider.TextColor3 = Color3.fromRGB(255, 255, 255)
+    distanceSlider.Font = Enum.Font.Gotham
+    distanceSlider.Parent = mainFrame
+    
+    -- Логика перемещения окна
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            frameStartPos = Vector2.new(mainFrame.Position.X.Offset, mainFrame.Position.Y.Offset)
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+            local delta = mousePos - dragStartPos
+            mainFrame.Position = UDim2.new(0, frameStartPos.X + delta.X, 0, frameStartPos.Y + delta.Y)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    
+    -- Обработчики кнопок
+    toggleBtn.MouseButton1Click:Connect(function()
+        AIM_ENABLED = not AIM_ENABLED
+        toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+        
+        if AIM_ENABLED then
+            coroutine.wrap(aimAtTarget)()
+        elseif aimIndicator then
+            aimIndicator:Destroy()
+            aimIndicator = nil
+        end
+    end)
+    
+    wallhackBtn.MouseButton1Click:Connect(function()
+        SETTINGS.IGNORE_WALLS = not SETTINGS.IGNORE_WALLS
+        wallhackBtn.Text = "WALLHACK: " .. (SETTINGS.IGNORE_WALLS and "ON" or "OFF")
+        wallhackBtn.BackgroundColor3 = SETTINGS.IGNORE_WALLS and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+    end)
+    
+    hitboxBtn.MouseButton1Click:Connect(function()
+        SETTINGS.SHOW_HITBOXES = not SETTINGS.SHOW_HITBOXES
+        hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
+        hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+        updateHitboxes()
+    end)
+    
+    -- Горячая клавиша
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if input.KeyCode == SETTINGS.AIM_KEY and not gameProcessed then
+            AIM_ENABLED = not AIM_ENABLED
+            toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+            
+            if AIM_ENABLED then
+                coroutine.wrap(aimAtTarget)()
+            elseif aimIndicator then
+                aimIndicator:Destroy()
+                aimIndicator = nil
+            end
+        end
+    end)
 end
 
--- Основная функция телепортации (бесконечная версия)
-local function teleportToCursor()
-    updateCharacterReferences()
-    if not character or not humanoid or not rootPart then return end
+-- Обработка новых игроков
+local function onPlayerAdded(player)
+    player.CharacterAdded:Connect(function(character)
+        if SETTINGS.SHOW_HITBOXES then
+            updateHitboxes()
+        end
+    end)
     
-    local mousePos = UserInputService:GetMouseLocation()
-    local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
-    
-    local raycastParams = RaycastParams.new()
-    raycastParams.FilterDescendantsInstances = {character}
-    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-    
-    -- Если включена бесконечная дистанция, используем очень большое значение
-    local distance = settings.InfiniteDistance and 99999 or 150
-    
-    local raycastResult = workspace:Raycast(ray.Origin, ray.Direction * distance, raycastParams)
-    
-    -- Если нет пересечения с объектами, телепортируемся "вдаль"
-    local targetPosition = raycastResult and raycastResult.Position or (ray.Origin + ray.Direction * distance)
-    local teleportCFrame = CFrame.new(targetPosition + Vector3.new(0, settings.HeightOffset, 0))
-    
-    createTeleportEffect(teleportCFrame.Position)
-    smoothTeleport(teleportCFrame)
+    player.CharacterRemoving:Connect(function()
+        if hitboxes[player] then
+            for _, part in pairs(hitboxes[player]) do
+                part:Destroy()
+            end
+            hitboxes[player] = nil
+        end
+    end)
 end
 
 -- Инициализация
-player.CharacterAdded:Connect(updateCharacterReferences)
-updateCharacterReferences()
+for _, player in ipairs(Players:GetPlayers()) do
+    onPlayerAdded(player)
+end
 
--- Обработка ввода
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if not gameProcessed and input.KeyCode == settings.TeleportKey then
-        teleportToCursor()
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(function(player)
+    if hitboxes[player] then
+        for _, part in pairs(hitboxes[player]) do
+            part:Destroy()
+        end
+        hitboxes[player] = nil
     end
 end)
 
-print(string.format(
-    [[
-Телепорт активирован (бесконечная версия)!
-Клавиша: %s
-Высота: %.1f
-Плавный переход: %s
-Эффекты: %s
-]],
-    settings.TeleportKey,
-    settings.HeightOffset,
-    settings.SmoothTeleport and "Вкл" or "Выкл",
-    settings.TeleportEffect and "Вкл" or "Выкл"
-))
+createGUI()
+
+-- Очистка при выходе
+game:BindToClose(function()
+    if aimIndicator then
+        aimIndicator:Destroy()
+    end
+    if gui then
+        gui:Destroy()
+    end
+    for _, playerParts in pairs(hitboxes) do
+        for _, part in pairs(playerParts) do
+            part:Destroy()
+        end
+    end
+end)
+
+print("AimLock система с хитбоксами успешно загружена!")

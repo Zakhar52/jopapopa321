@@ -7,16 +7,19 @@ local CoreGui = game:GetService("CoreGui")
 -- Настройки по умолчанию
 local SETTINGS = {
     AIM_KEY = Enum.KeyCode.L,
+    TELEPORT_KEY = Enum.KeyCode.T,
     LOCK_DISTANCE = 100,
     SMOOTHNESS = 0.2,
     IGNORE_WALLS = true,
     SHOW_TARGET = true,
     SHOW_HITBOXES = false,
-    FOV = 60
+    FOV = 60,
+    TELEPORT_HEIGHT = 2.5
 }
 
 -- Состояние системы
 local AIM_ENABLED = false
+local TELEPORT_ENABLED = false
 local target = nil
 local gui = nil
 local aimIndicator = nil
@@ -78,6 +81,42 @@ local function updateHitboxes()
                 end
             end
         end
+    end
+end
+
+-- Бесконечная телепортация
+local function teleportToCursor()
+    if not Players.LocalPlayer.Character then return end
+    
+    local camera = workspace.CurrentCamera
+    local mousePos = UserInputService:GetMouseLocation()
+    local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterDescendantsInstances = {Players.LocalPlayer.Character}
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    
+    local distance = 99999
+    local raycastResult = workspace:Raycast(ray.Origin, ray.Direction * distance, raycastParams)
+    
+    local targetPosition = raycastResult and raycastResult.Position or (ray.Origin + ray.Direction * distance)
+    local teleportCFrame = CFrame.new(targetPosition + Vector3.new(0, SETTINGS.TELEPORT_HEIGHT, 0))
+    
+    local hrp = Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = teleportCFrame
+        
+        -- Эффект телепортации
+        local effect = Instance.new("Part")
+        effect.Size = Vector3.new(3, 0.2, 3)
+        effect.Position = targetPosition
+        effect.Anchored = true
+        effect.CanCollide = false
+        effect.Material = Enum.Material.Neon
+        effect.Color = Color3.fromRGB(0, 150, 255)
+        effect.Transparency = 0.7
+        effect.Parent = workspace
+        game:GetService("Debris"):AddItem(effect, 1)
     end
 end
 
@@ -162,23 +201,23 @@ local function createGUI()
     gui.Parent = CoreGui
     
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 320, 0, 250)
-    mainFrame.Position = UDim2.new(0.5, -160, 0.5, -125)
+    mainFrame.Size = UDim2.new(0, 320, 0, 300) -- Увеличили высоту для новых элементов
+    mainFrame.Position = UDim2.new(0.5, -160, 0.5, -150)
     mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = gui
-    applyUICorner(mainFrame, 0.1) -- Скругление основного фрейма
+    applyUICorner(mainFrame, 0.1)
     
     local titleBar = Instance.new("Frame")
     titleBar.Size = UDim2.new(1, 0, 0, 30)
     titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     titleBar.BorderSizePixel = 0
     titleBar.Parent = mainFrame
-    applyUICorner(titleBar, 0.1) -- Скругление верхней панели
+    applyUICorner(titleBar, 0.1)
     
     local title = Instance.new("TextLabel")
-    title.Text = "AIMLOCK CONTROL PANEL"
+    title.Text = "ADVANCED CONTROL PANEL"
     title.Size = UDim2.new(1, 0, 1, 0)
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 80, 80)
@@ -186,23 +225,23 @@ local function createGUI()
     title.TextSize = 14
     title.Parent = titleBar
     
-    -- Кнопка включения
+    -- Кнопка включения аимлока
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Text = "TOGGLE AIMLOCK (L)"
-    toggleBtn.Size = UDim2.new(0.9, 0, 0, 35)
-    toggleBtn.Position = UDim2.new(0.05, 0, 0.15, 0)
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0.12, 0)
     toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     toggleBtn.Font = Enum.Font.Gotham
     toggleBtn.TextSize = 12
     toggleBtn.Parent = mainFrame
-    applyUICorner(toggleBtn, 0.15) -- Скругление кнопки
+    applyUICorner(toggleBtn, 0.15)
     
     -- Переключатель Wallhack
     local wallhackBtn = Instance.new("TextButton")
     wallhackBtn.Text = "WALLHACK: " .. (SETTINGS.IGNORE_WALLS and "ON" or "OFF")
     wallhackBtn.Size = UDim2.new(0.9, 0, 0, 30)
-    wallhackBtn.Position = UDim2.new(0.05, 0, 0.35, 0)
+    wallhackBtn.Position = UDim2.new(0.05, 0, 0.27, 0)
     wallhackBtn.BackgroundColor3 = SETTINGS.IGNORE_WALLS and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     wallhackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     wallhackBtn.Font = Enum.Font.Gotham
@@ -214,7 +253,7 @@ local function createGUI()
     local hitboxBtn = Instance.new("TextButton")
     hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
     hitboxBtn.Size = UDim2.new(0.9, 0, 0, 30)
-    hitboxBtn.Position = UDim2.new(0.05, 0, 0.55, 0)
+    hitboxBtn.Position = UDim2.new(0.05, 0, 0.42, 0)
     hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     hitboxBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     hitboxBtn.Font = Enum.Font.Gotham
@@ -222,17 +261,41 @@ local function createGUI()
     hitboxBtn.Parent = mainFrame
     applyUICorner(hitboxBtn, 0.15)
     
+    -- Кнопка телепортации
+    local teleportBtn = Instance.new("TextButton")
+    teleportBtn.Text = "TELEPORT (T)"
+    teleportBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    teleportBtn.Position = UDim2.new(0.05, 0, 0.57, 0)
+    teleportBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 255)
+    teleportBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    teleportBtn.Font = Enum.Font.Gotham
+    teleportBtn.TextSize = 12
+    teleportBtn.Parent = mainFrame
+    applyUICorner(teleportBtn, 0.15)
+    
     -- Слайдер дистанции
     local distanceSlider = Instance.new("TextLabel")
     distanceSlider.Text = "DISTANCE: " .. SETTINGS.LOCK_DISTANCE
     distanceSlider.Size = UDim2.new(0.9, 0, 0, 30)
-    distanceSlider.Position = UDim2.new(0.05, 0, 0.75, 0)
+    distanceSlider.Position = UDim2.new(0.05, 0, 0.72, 0)
     distanceSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     distanceSlider.TextColor3 = Color3.fromRGB(255, 255, 255)
     distanceSlider.Font = Enum.Font.Gotham
     distanceSlider.TextSize = 12
     distanceSlider.Parent = mainFrame
     applyUICorner(distanceSlider, 0.15)
+    
+    -- Информация о высоте телепортации
+    local heightInfo = Instance.new("TextLabel")
+    heightInfo.Text = "TELEPORT HEIGHT: " .. SETTINGS.TELEPORT_HEIGHT
+    heightInfo.Size = UDim2.new(0.9, 0, 0, 30)
+    heightInfo.Position = UDim2.new(0.05, 0, 0.87, 0)
+    heightInfo.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    heightInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
+    heightInfo.Font = Enum.Font.Gotham
+    heightInfo.TextSize = 12
+    heightInfo.Parent = mainFrame
+    applyUICorner(heightInfo, 0.15)
     
     -- Логика перемещения окна
     titleBar.InputBegan:Connect(function(input)
@@ -283,17 +346,25 @@ local function createGUI()
         updateHitboxes()
     end)
     
-    -- Горячая клавиша
+    teleportBtn.MouseButton1Click:Connect(function()
+        teleportToCursor()
+    end)
+    
+    -- Горячие клавиши
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if input.KeyCode == SETTINGS.AIM_KEY and not gameProcessed then
-            AIM_ENABLED = not AIM_ENABLED
-            toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
-            
-            if AIM_ENABLED then
-                coroutine.wrap(aimAtTarget)()
-            elseif aimIndicator then
-                aimIndicator:Destroy()
-                aimIndicator = nil
+        if not gameProcessed then
+            if input.KeyCode == SETTINGS.AIM_KEY then
+                AIM_ENABLED = not AIM_ENABLED
+                toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+                
+                if AIM_ENABLED then
+                    coroutine.wrap(aimAtTarget)()
+                elseif aimIndicator then
+                    aimIndicator:Destroy()
+                    aimIndicator = nil
+                end
+            elseif input.KeyCode == SETTINGS.TELEPORT_KEY then
+                teleportToCursor()
             end
         end
     end)
@@ -349,4 +420,4 @@ game:BindToClose(function()
     end
 end)
 
-print("AimLock система с улучшенным UI успешно загружена!")
+print("Расширенная система управления успешно загружена!")

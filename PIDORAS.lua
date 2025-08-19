@@ -22,6 +22,7 @@ local CoreGui = game:GetService("CoreGui")
 local SETTINGS = {
     AIM_KEY = Enum.KeyCode.L,
     TELEPORT_KEY = Enum.KeyCode.T,
+    TOGGLE_MENU_KEY = Enum.KeyCode.N, -- Новая клавиша для меню
     LOCK_DISTANCE = 100,
     SMOOTHNESS = 0.2,
     IGNORE_WALLS = true,
@@ -30,7 +31,7 @@ local SETTINGS = {
     FOV = 60,
     TELEPORT_HEIGHT = 2.5,
     AURA_ENABLED = false,
-    AURA_COLOR = Color3.fromRGB(0, 255, 255), -- Голубой цвет как у SSJ
+    AURA_COLOR = Color3.fromRGB(0, 255, 255),
     AURA_INTENSITY = 5,
     AURA_SIZE = 12,
     AURA_PULSE_SPEED = 2
@@ -44,8 +45,9 @@ local aimIndicator = nil
 local hitboxes = {}
 local auraEffects = {}
 local dragging = false
-local dragStartPos = Vector2.new(0, 0)
-local frameStartPos = Vector2.new(0, 0)
+local dragStartPosition = Vector2.new(0, 0)
+local frameStartPosition = UDim2.new()
+local MENU_VISIBLE = true -- Состояние видимости меню
 
 -- Функция для добавления скруглений
 local function applyUICorner(object, cornerRadius)
@@ -64,7 +66,6 @@ function system:Destroy()
         self.Components.aimIndicator:Destroy()
     end
     
-    -- Удаляем все эффекты ауры
     for _, effect in pairs(auraEffects) do
         if effect then
             effect:Destroy()
@@ -89,9 +90,77 @@ end
 -- Сохраняем компоненты в систему
 system.Components.connections = {}
 
+-- Функция переключения видимости меню
+local function toggleMenuVisibility()
+    MENU_VISIBLE = not MENU_VISIBLE
+    
+    if gui and gui.Parent then
+        gui.Enabled = MENU_VISIBLE
+    end
+    
+    print("Меню:", MENU_VISIBLE and "ОТКРЫТО" or "СКРЫТО")
+end
+
+-- Корректная система перетаскивания GUI
+local function setupDragging(frame, dragHandle)
+    local isDragging = false
+    local dragStart = nil
+    local frameStart = nil
+    
+    -- Начало перетаскивания
+    local function startDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = true
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            frameStart = frame.Position
+            
+            -- Захватываем мышь для плавного перемещения
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    isDragging = false
+                end
+            end)
+        end
+    end
+    
+    -- Обновление позиции при перетаскивании
+    local function updateDrag(input)
+        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local currentPosition = Vector2.new(input.Position.X, input.Position.Y)
+            local delta = currentPosition - dragStart
+            
+            -- Плавное перемещение без рывков
+            frame.Position = UDim2.new(
+                frameStart.X.Scale, 
+                frameStart.X.Offset + delta.X,
+                frameStart.Y.Scale, 
+                frameStart.Y.Offset + delta.Y
+            )
+        end
+    end
+    
+    -- Окончание перетаскивания
+    local function endDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = false
+        end
+    end
+    
+    -- Подключаем обработчики событий
+    local connections = {}
+    
+    connections.inputBegan = dragHandle.InputBegan:Connect(startDrag)
+    connections.inputChanged = UserInputService.InputChanged:Connect(updateDrag)
+    connections.inputEnded = UserInputService.InputEnded:Connect(endDrag)
+    
+    -- Сохраняем соединения для последующей очистки
+    for _, conn in pairs(connections) do
+        table.insert(system.Components.connections, conn)
+    end
+end
+
 -- Создание аниме-ауры в стиле Dragon Ball
 local function createDragonBallAura()
-    -- Очищаем предыдущие эффекты
     for _, effect in pairs(auraEffects) do
         if effect then
             effect:Destroy()
@@ -145,96 +214,20 @@ local function createDragonBallAura()
     mainParticles.VelocitySpread = 360
     mainParticles.Parent = mainAura
 
-    -- Энергетические всполохи (как в аниме)
-    local energyParticles = Instance.new("ParticleEmitter")
-    energyParticles.Texture = "rbxassetid://243664672"
-    energyParticles.Color = ColorSequence.new(SETTINGS.AURA_COLOR)
-    energyParticles.Size = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 3),
-        NumberSequenceKeypoint.new(1, 1)
-    })
-    energyParticles.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0.1),
-        NumberSequenceKeypoint.new(1, 0.9)
-    })
-    energyParticles.Lifetime = NumberRange.new(0.5, 1)
-    energyParticles.Rate = 50
-    energyParticles.Speed = NumberRange.new(10, 20)
-    energyParticles.Rotation = NumberRange.new(0, 360)
-    energyParticles.Parent = mainAura
-
-    -- Эффект электрических разрядов
-    local lightningParticles = Instance.new("ParticleEmitter")
-    lightningParticles.Texture = "rbxassetid://245221102"
-    lightningParticles.Color = ColorSequence.new(Color3.fromRGB(255, 255, 200))
-    lightningParticles.Size = NumberSequence.new(1, 3)
-    lightningParticles.Transparency = NumberSequence.new(0.3, 0.8)
-    lightningParticles.Lifetime = NumberRange.new(0.3, 0.7)
-    lightningParticles.Rate = 30
-    lightningParticles.Speed = NumberRange.new(15, 25)
-    lightningParticles.Parent = mainAura
-
-    -- Аура вокруг рук
-    local function createHandAuras()
-        local handParts = {}
-        if humanoid.RigType == Enum.HumanoidRigType.R6 then
-            handParts = {
-                player.Character:FindFirstChild("Left Arm"),
-                player.Character:FindFirstChild("Right Arm")
-            }
-        else
-            handParts = {
-                player.Character:FindFirstChild("LeftHand"),
-                player.Character:FindFirstChild("RightHand"),
-                player.Character:FindFirstChild("LeftLowerArm"),
-                player.Character:FindFirstChild("RightLowerArm")
-            }
-        end
-
-        for _, hand in pairs(handParts) do
-            if hand then
-                local handGlow = Instance.new("PointLight")
-                handGlow.Brightness = 3
-                handGlow.Range = 8
-                handGlow.Color = SETTINGS.AURA_COLOR
-                handGlow.Parent = hand
-
-                local handParticles = Instance.new("ParticleEmitter")
-                handParticles.Texture = "rbxassetid://2425634065"
-                handParticles.Color = ColorSequence.new(SETTINGS.AURA_COLOR)
-                handParticles.Size = NumberSequence.new(0.5, 1.5)
-                handParticles.Lifetime = NumberRange.new(0.5, 1)
-                handParticles.Rate = 25
-                handParticles.Speed = NumberRange.new(3, 7)
-                handParticles.Parent = hand
-
-                table.insert(auraEffects, handGlow)
-                table.insert(auraEffects, handParticles)
-            end
-        end
-    end
-
-    createHandAuras()
-
     -- Пульсация ауры
     local pulseTime = 0
     local function updateAura()
         while SETTINGS.AURA_ENABLED and system.Enabled and mainAura.Parent do
             pulseTime += RunService.Heartbeat:Wait() * SETTINGS.AURA_PULSE_SPEED
             
-            -- Пульсация размера
             local pulse = math.sin(pulseTime) * 0.2 + 1
             mainAura.Size = Vector3.new(SETTINGS.AURA_SIZE, SETTINGS.AURA_SIZE, SETTINGS.AURA_SIZE) * pulse
-            
-            -- Пульсация свечения
             pointLight.Brightness = SETTINGS.AURA_INTENSITY + math.sin(pulseTime * 2) * 2
             
-            -- Следование за игроком
             if hrp then
                 mainAura.Position = hrp.Position + Vector3.new(0, 2, 0)
             end
             
-            -- Случайные вспышки энергии
             if math.random(1, 20) == 1 then
                 mainParticles:Emit(10)
             end
@@ -244,8 +237,6 @@ local function createDragonBallAura()
     table.insert(auraEffects, mainAura)
     table.insert(auraEffects, pointLight)
     table.insert(auraEffects, mainParticles)
-    table.insert(auraEffects, energyParticles)
-    table.insert(auraEffects, lightningParticles)
 
     coroutine.wrap(updateAura)()
 end
@@ -276,38 +267,6 @@ local function createAimIndicator()
     aimIndicator.Parent = workspace
     
     system.Components.aimIndicator = aimIndicator
-end
-
--- Создание/удаление хитбоксов
-local function updateHitboxes()
-    for player, parts in pairs(hitboxes) do
-        for _, part in pairs(parts) do
-            part:Destroy()
-        end
-    end
-    hitboxes = {}
-
-    if not SETTINGS.SHOW_HITBOXES then return end
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= Players.LocalPlayer and player.Character then
-            hitboxes[player] = {}
-            for _, part in ipairs(player.Character:GetDescendants()) do
-                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                    local hitbox = Instance.new("BoxHandleAdornment")
-                    hitbox.Name = "HitboxVisualizer"
-                    hitbox.Adornee = part
-                    hitbox.AlwaysOnTop = true
-                    hitbox.ZIndex = 10
-                    hitbox.Size = part.Size
-                    hitbox.Transparency = 0.7
-                    hitbox.Color3 = Color3.fromRGB(0, 255, 255)
-                    hitbox.Parent = part
-                    table.insert(hitboxes[player], hitbox)
-                end
-            end
-        end
-    end
 end
 
 -- Бесконечная телепортация
@@ -418,13 +377,15 @@ local function aimAtTarget()
     end
 end
 
--- Создание интерфейса с UICorner
+-- Создание интерфейса
 local function createGUI()
     if gui then gui:Destroy() end
     
     gui = Instance.new("ScreenGui")
     gui.Name = "AimLockUI"
     gui.Parent = CoreGui
+    gui.ResetOnSpawn = false
+    gui.Enabled = MENU_VISIBLE -- Устанавливаем начальную видимость
     
     system.Components.gui = gui
     
@@ -437,12 +398,14 @@ local function createGUI()
     mainFrame.Parent = gui
     applyUICorner(mainFrame, 0.1)
     
-    local titleBar = Instance.new("Frame")
-    titleBar.Size = UDim2.new(1, 0, 0, 30)
-    titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
-    applyUICorner(titleBar, 0.1)
+    -- Панель для перетаскивания
+    local dragHandle = Instance.new("Frame")
+    dragHandle.Name = "DragHandle"
+    dragHandle.Size = UDim2.new(1, 0, 0, 30)
+    dragHandle.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    dragHandle.BorderSizePixel = 0
+    dragHandle.Parent = mainFrame
+    applyUICorner(dragHandle, 0.1)
     
     local title = Instance.new("TextLabel")
     title.Text = "ADVANCED CONTROL PANEL"
@@ -451,7 +414,10 @@ local function createGUI()
     title.TextColor3 = Color3.fromRGB(255, 80, 80)
     title.Font = Enum.Font.GothamBold
     title.TextSize = 14
-    title.Parent = titleBar
+    title.Parent = dragHandle
+    
+    -- Настраиваем систему перетаскивания
+    setupDragging(mainFrame, dragHandle)
     
     -- Кнопка включения аимлока
     local toggleBtn = Instance.new("TextButton")
@@ -513,17 +479,17 @@ local function createGUI()
     auraBtn.Parent = mainFrame
     applyUICorner(auraBtn, 0.15)
     
-    -- Слайдер дистанции
-    local distanceSlider = Instance.new("TextLabel")
-    distanceSlider.Text = "DISTANCE: " .. SETTINGS.LOCK_DISTANCE
-    distanceSlider.Size = UDim2.new(0.9, 0, 0, 30)
-    distanceSlider.Position = UDim2.new(0.05, 0, 0.70, 0)
-    distanceSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    distanceSlider.TextColor3 = Color3.fromRGB(255, 255, 255)
-    distanceSlider.Font = Enum.Font.Gotham
-    distanceSlider.TextSize = 12
-    distanceSlider.Parent = mainFrame
-    applyUICorner(distanceSlider, 0.15)
+    -- Информация о переключении меню
+    local menuInfo = Instance.new("TextLabel")
+    menuInfo.Text = "N - Показать/Скрыть меню"
+    menuInfo.Size = UDim2.new(0.9, 0, 0, 30)
+    menuInfo.Position = UDim2.new(0.05, 0, 0.70, 0)
+    menuInfo.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    menuInfo.TextColor3 = Color3.fromRGB(200, 200, 200)
+    menuInfo.Font = Enum.Font.Gotham
+    menuInfo.TextSize = 11
+    menuInfo.Parent = mainFrame
+    applyUICorner(menuInfo, 0.15)
     
     -- Информация о высоте телепортации
     local heightInfo = Instance.new("TextLabel")
@@ -536,32 +502,6 @@ local function createGUI()
     heightInfo.TextSize = 12
     heightInfo.Parent = mainFrame
     applyUICorner(heightInfo, 0.15)
-    
-    -- Логика перемещения окна
-    local dragConnection = titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
-            frameStartPos = Vector2.new(mainFrame.Position.X.Offset, mainFrame.Position.Y.Offset)
-        end
-    end)
-    table.insert(system.Components.connections, dragConnection)
-    
-    local moveConnection = UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local mousePos = Vector2.new(input.Position.X, input.Position.Y)
-            local delta = mousePos - dragStartPos
-            mainFrame.Position = UDim2.new(0, frameStartPos.X + delta.X, 0, frameStartPos.Y + delta.Y)
-        end
-    end)
-    table.insert(system.Components.connections, moveConnection)
-    
-    local endConnection = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    table.insert(system.Components.connections, endConnection)
     
     -- Обработчики кнопок
     toggleBtn.MouseButton1Click:Connect(function()
@@ -586,7 +526,6 @@ local function createGUI()
         SETTINGS.SHOW_HITBOXES = not SETTINGS.SHOW_HITBOXES
         hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
         hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
-        updateHitboxes()
     end)
     
     teleportBtn.MouseButton1Click:Connect(function()
@@ -620,66 +559,16 @@ local function createGUI()
                 end
             elseif input.KeyCode == SETTINGS.TELEPORT_KEY then
                 teleportToCursor()
+            elseif input.KeyCode == SETTINGS.TOGGLE_MENU_KEY then
+                toggleMenuVisibility()
             end
         end
     end)
+    
     table.insert(system.Components.connections, keyConnection)
 end
 
--- Обработка смены персонажа
-local function onCharacterAdded(character)
-    if SETTINGS.AURA_ENABLED then
-        -- Пересоздаем ауру при появлении нового персонажа
-        removeDragonBallAura()
-        wait(1)
-        createDragonBallAura()
-    end
-end
-
 -- Инициализация
-local player = Players.LocalPlayer
-if player then
-    local charConnection = player.CharacterAdded:Connect(onCharacterAdded)
-    table.insert(system.Components.connections, charConnection)
-    
-    if player.Character then
-        onCharacterAdded(player.Character)
-    end
-end
-
-for _, otherPlayer in ipairs(Players:GetPlayers()) do
-    if otherPlayer ~= player then
-        local charConnection = otherPlayer.CharacterAdded:Connect(function(character)
-            if SETTINGS.SHOW_HITBOXES then
-                updateHitboxes()
-            end
-        end)
-        table.insert(system.Components.connections, charConnection)
-    end
-end
-
-local playerAddedConnection = Players.PlayerAdded:Connect(function(newPlayer)
-    if newPlayer ~= player then
-        local charConnection = newPlayer.CharacterAdded:Connect(function(character)
-            if SETTINGS.SHOW_HITBOXES then
-                updateHitboxes()
-            end
-        end)
-        table.insert(system.Components.connections, charConnection)
-    end
-end)
-table.insert(system.Components.connections, playerAddedConnection)
-
-local playerRemovedConnection = Players.PlayerRemoving:Connect(function(leftPlayer)
-    if hitboxes[leftPlayer] then
-        for _, part in pairs(hitboxes[leftPlayer]) do
-            part:Destroy()
-        end
-        hitboxes[leftPlayer] = nil
-    end
-end)
-table.insert(system.Components.connections, playerRemovedConnection)
-
 createGUI()
 
 -- Очистка при выходе
@@ -689,4 +578,7 @@ game:BindToClose(function()
     end
 end)
 
-print("Система управления с аурой в стиле Dragon Ball загружена!")
+print("Система управления загружена!")
+print("N - Показать/Скрыть меню")
+print("T - Телепортация") 
+print("L - Вкл/Выкл прицеливание")

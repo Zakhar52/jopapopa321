@@ -11,7 +11,7 @@ local SETTINGS = {
     SMOOTHNESS = 0.2,
     IGNORE_WALLS = true,
     SHOW_TARGET = true,
-    SHOW_HITBOXES = false, -- Новая настройка для хитбоксов
+    SHOW_HITBOXES = false,
     FOV = 60
 }
 
@@ -20,10 +20,18 @@ local AIM_ENABLED = false
 local target = nil
 local gui = nil
 local aimIndicator = nil
-local hitboxes = {} -- Таблица для хранения хитбоксов
+local hitboxes = {}
 local dragging = false
 local dragStartPos = Vector2.new(0, 0)
 local frameStartPos = Vector2.new(0, 0)
+
+-- Функция для добавления скруглений
+local function applyUICorner(object, cornerRadius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(cornerRadius, 0)
+    corner.Parent = object
+    return corner
+end
 
 -- Создание 3D индикатора цели
 local function createAimIndicator()
@@ -145,7 +153,7 @@ local function aimAtTarget()
     end
 end
 
--- Создание интерфейса
+-- Создание интерфейса с UICorner
 local function createGUI()
     if gui then gui:Destroy() end
     
@@ -154,18 +162,20 @@ local function createGUI()
     gui.Parent = CoreGui
     
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 320, 0, 250) -- Увеличили размер для новых элементов
+    mainFrame.Size = UDim2.new(0, 320, 0, 250)
     mainFrame.Position = UDim2.new(0.5, -160, 0.5, -125)
     mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = gui
+    applyUICorner(mainFrame, 0.1) -- Скругление основного фрейма
     
     local titleBar = Instance.new("Frame")
     titleBar.Size = UDim2.new(1, 0, 0, 30)
     titleBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     titleBar.BorderSizePixel = 0
     titleBar.Parent = mainFrame
+    applyUICorner(titleBar, 0.1) -- Скругление верхней панели
     
     local title = Instance.new("TextLabel")
     title.Text = "AIMLOCK CONTROL PANEL"
@@ -173,6 +183,7 @@ local function createGUI()
     title.BackgroundTransparency = 1
     title.TextColor3 = Color3.fromRGB(255, 80, 80)
     title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
     title.Parent = titleBar
     
     -- Кнопка включения
@@ -183,7 +194,9 @@ local function createGUI()
     toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     toggleBtn.Font = Enum.Font.Gotham
+    toggleBtn.TextSize = 12
     toggleBtn.Parent = mainFrame
+    applyUICorner(toggleBtn, 0.15) -- Скругление кнопки
     
     -- Переключатель Wallhack
     local wallhackBtn = Instance.new("TextButton")
@@ -193,7 +206,9 @@ local function createGUI()
     wallhackBtn.BackgroundColor3 = SETTINGS.IGNORE_WALLS and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     wallhackBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     wallhackBtn.Font = Enum.Font.Gotham
+    wallhackBtn.TextSize = 12
     wallhackBtn.Parent = mainFrame
+    applyUICorner(wallhackBtn, 0.15)
     
     -- Переключатель хитбоксов
     local hitboxBtn = Instance.new("TextButton")
@@ -203,7 +218,9 @@ local function createGUI()
     hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
     hitboxBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     hitboxBtn.Font = Enum.Font.Gotham
+    hitboxBtn.TextSize = 12
     hitboxBtn.Parent = mainFrame
+    applyUICorner(hitboxBtn, 0.15)
     
     -- Слайдер дистанции
     local distanceSlider = Instance.new("TextLabel")
@@ -213,7 +230,9 @@ local function createGUI()
     distanceSlider.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
     distanceSlider.TextColor3 = Color3.fromRGB(255, 255, 255)
     distanceSlider.Font = Enum.Font.Gotham
+    distanceSlider.TextSize = 12
     distanceSlider.Parent = mainFrame
+    applyUICorner(distanceSlider, 0.15)
     
     -- Логика перемещения окна
     titleBar.InputBegan:Connect(function(input)
@@ -330,4 +349,4 @@ game:BindToClose(function()
     end
 end)
 
-print("AimLock система с хитбоксами успешно загружена!")
+print("AimLock система с улучшенным UI успешно загружена!")

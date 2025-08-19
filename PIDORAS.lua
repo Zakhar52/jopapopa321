@@ -22,7 +22,7 @@ local CoreGui = game:GetService("CoreGui")
 local SETTINGS = {
     AIM_KEY = Enum.KeyCode.L,
     TELEPORT_KEY = Enum.KeyCode.T,
-    TOGGLE_MENU_KEY = Enum.KeyCode.N, -- Новая клавиша для меню
+    TOGGLE_MENU_KEY = Enum.KeyCode.N,
     LOCK_DISTANCE = 100,
     SMOOTHNESS = 0.2,
     IGNORE_WALLS = true,
@@ -34,7 +34,8 @@ local SETTINGS = {
     AURA_COLOR = Color3.fromRGB(0, 255, 255),
     AURA_INTENSITY = 5,
     AURA_SIZE = 12,
-    AURA_PULSE_SPEED = 2
+    AURA_PULSE_SPEED = 2,
+    HITBOX_COLOR = Color3.fromRGB(255, 50, 50) -- Красный цвет хитбоксов
 }
 
 -- Состояние системы
@@ -47,7 +48,7 @@ local auraEffects = {}
 local dragging = false
 local dragStartPosition = Vector2.new(0, 0)
 local frameStartPosition = UDim2.new()
-local MENU_VISIBLE = true -- Состояние видимости меню
+local MENU_VISIBLE = true
 
 -- Функция для добавления скруглений
 local function applyUICorner(object, cornerRadius)
@@ -73,11 +74,13 @@ function system:Destroy()
     end
     auraEffects = {}
     
-    for _, playerParts in pairs(hitboxes) do
-        for _, part in pairs(playerParts) do
-            part:Destroy()
+    -- Очищаем хитбоксы
+    for player, hitboxData in pairs(hitboxes) do
+        if hitboxData and hitboxData.cleanup then
+            hitboxData:cleanup()
         end
     end
+    hitboxes = {}
     
     for _, connection in pairs(self.Components.connections or {}) do
         connection:Disconnect()
@@ -101,35 +104,92 @@ local function toggleMenuVisibility()
     print("Меню:", MENU_VISIBLE and "ОТКРЫТО" or "СКРЫТО")
 end
 
+-- Создание красных хитбоксов
+local function updateHitboxes()
+    -- Очищаем старые хитбоксы
+    for player, hitboxData in pairs(hitboxes) do
+        if hitboxData and hitboxData.cleanup then
+            hitboxData:cleanup()
+        end
+    end
+    hitboxes = {}
+
+    if not SETTINGS.SHOW_HITBOXES then return end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= Players.LocalPlayer and player.Character then
+            local hitboxData = {
+                adornments = {},
+                connections = {},
+                cleanup = function(self)
+                    for _, adornment in pairs(self.adornments) do
+                        if adornment and adornment.Parent then
+                            adornment:Destroy()
+                        end
+                    end
+                    for _, connection in pairs(self.connections) do
+                        connection:Disconnect()
+                    end
+                    self.adornments = {}
+                    self.connections = {}
+                end
+            }
+            
+            hitboxes[player] = hitboxData
+            
+            -- Функция создания хитбоксов для персонажа
+            local function createPlayerHitboxes(character)
+                hitboxData:cleanup()
+                
+                for _, part in ipairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                        local hitbox = Instance.new("BoxHandleAdornment")
+                        hitbox.Name = "RedHitbox"
+                        hitbox.Adornee = part
+                        hitbox.AlwaysOnTop = true
+                        hitbox.ZIndex = 10
+                        hitbox.Size = part.Size + Vector3.new(0.1, 0.1, 0.1) -- Небольшой отступ
+                        hitbox.Transparency = 0.3
+                        hitbox.Color3 = SETTINGS.HITBOX_COLOR -- Красный цвет
+                        hitbox.Parent = part
+                        
+                        table.insert(hitboxData.adornments, hitbox)
+                    end
+                end
+            end
+            
+            -- Создаем хитбоксы для текущего персонажа
+            createPlayerHitboxes(player.Character)
+            
+            -- Обработчик изменения персонажа
+            local charConnection = player.CharacterAdded:Connect(function(newCharacter)
+                createPlayerHitboxes(newCharacter)
+            end)
+            
+            table.insert(hitboxData.connections, charConnection)
+        end
+    end
+end
+
 -- Корректная система перетаскивания GUI
 local function setupDragging(frame, dragHandle)
     local isDragging = false
     local dragStart = nil
     local frameStart = nil
     
-    -- Начало перетаскивания
     local function startDrag(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             isDragging = true
             dragStart = Vector2.new(input.Position.X, input.Position.Y)
             frameStart = frame.Position
-            
-            -- Захватываем мышь для плавного перемещения
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    isDragging = false
-                end
-            end)
         end
     end
     
-    -- Обновление позиции при перетаскивании
     local function updateDrag(input)
         if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             local currentPosition = Vector2.new(input.Position.X, input.Position.Y)
             local delta = currentPosition - dragStart
             
-            -- Плавное перемещение без рывков
             frame.Position = UDim2.new(
                 frameStart.X.Scale, 
                 frameStart.X.Offset + delta.X,
@@ -139,21 +199,18 @@ local function setupDragging(frame, dragHandle)
         end
     end
     
-    -- Окончание перетаскивания
     local function endDrag(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             isDragging = false
         end
     end
     
-    -- Подключаем обработчики событий
     local connections = {}
     
     connections.inputBegan = dragHandle.InputBegan:Connect(startDrag)
     connections.inputChanged = UserInputService.InputChanged:Connect(updateDrag)
     connections.inputEnded = UserInputService.InputEnded:Connect(endDrag)
     
-    -- Сохраняем соединения для последующей очистки
     for _, conn in pairs(connections) do
         table.insert(system.Components.connections, conn)
     end
@@ -175,7 +232,6 @@ local function createDragonBallAura()
     local hrp = player.Character:FindFirstChild("HumanoidRootPart")
     if not humanoid or not hrp then return end
 
-    -- Основная аура вокруг тела
     local mainAura = Instance.new("Part")
     mainAura.Name = "DragonBallAura"
     mainAura.Size = Vector3.new(SETTINGS.AURA_SIZE, SETTINGS.AURA_SIZE, SETTINGS.AURA_SIZE)
@@ -187,14 +243,12 @@ local function createDragonBallAura()
     mainAura.CanCollide = false
     mainAura.Parent = workspace
 
-    -- Интенсивное свечение
     local pointLight = Instance.new("PointLight")
     pointLight.Brightness = SETTINGS.AURA_INTENSITY
     pointLight.Range = 15
     pointLight.Color = SETTINGS.AURA_COLOR
     pointLight.Parent = mainAura
 
-    -- Основные частицы ауры
     local mainParticles = Instance.new("ParticleEmitter")
     mainParticles.Texture = "rbxassetid://2425634065"
     mainParticles.Color = ColorSequence.new(SETTINGS.AURA_COLOR)
@@ -214,7 +268,6 @@ local function createDragonBallAura()
     mainParticles.VelocitySpread = 360
     mainParticles.Parent = mainAura
 
-    -- Пульсация ауры
     local pulseTime = 0
     local function updateAura()
         while SETTINGS.AURA_ENABLED and system.Enabled and mainAura.Parent do
@@ -291,7 +344,6 @@ local function teleportToCursor()
     if hrp then
         hrp.CFrame = teleportCFrame
         
-        -- Эффект телепортации
         local effect = Instance.new("Part")
         effect.Size = Vector3.new(3, 0.2, 3)
         effect.Position = targetPosition
@@ -385,7 +437,7 @@ local function createGUI()
     gui.Name = "AimLockUI"
     gui.Parent = CoreGui
     gui.ResetOnSpawn = false
-    gui.Enabled = MENU_VISIBLE -- Устанавливаем начальную видимость
+    gui.Enabled = MENU_VISIBLE
     
     system.Components.gui = gui
     
@@ -398,7 +450,6 @@ local function createGUI()
     mainFrame.Parent = gui
     applyUICorner(mainFrame, 0.1)
     
-    -- Панель для перетаскивания
     local dragHandle = Instance.new("Frame")
     dragHandle.Name = "DragHandle"
     dragHandle.Size = UDim2.new(1, 0, 0, 30)
@@ -416,10 +467,8 @@ local function createGUI()
     title.TextSize = 14
     title.Parent = dragHandle
     
-    -- Настраиваем систему перетаскивания
     setupDragging(mainFrame, dragHandle)
     
-    -- Кнопка включения аимлока
     local toggleBtn = Instance.new("TextButton")
     toggleBtn.Text = "TOGGLE AIMLOCK (L)"
     toggleBtn.Size = UDim2.new(0.9, 0, 0, 30)
@@ -431,7 +480,6 @@ local function createGUI()
     toggleBtn.Parent = mainFrame
     applyUICorner(toggleBtn, 0.15)
     
-    -- Переключатель Wallhack
     local wallhackBtn = Instance.new("TextButton")
     wallhackBtn.Text = "WALLHACK: " .. (SETTINGS.IGNORE_WALLS and "ON" or "OFF")
     wallhackBtn.Size = UDim2.new(0.9, 0, 0, 30)
@@ -443,7 +491,6 @@ local function createGUI()
     wallhackBtn.Parent = mainFrame
     applyUICorner(wallhackBtn, 0.15)
     
-    -- Переключатель хитбоксов
     local hitboxBtn = Instance.new("TextButton")
     hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
     hitboxBtn.Size = UDim2.new(0.9, 0, 0, 30)
@@ -455,7 +502,6 @@ local function createGUI()
     hitboxBtn.Parent = mainFrame
     applyUICorner(hitboxBtn, 0.15)
     
-    -- Кнопка телепортации
     local teleportBtn = Instance.new("TextButton")
     teleportBtn.Text = "TELEPORT (T)"
     teleportBtn.Size = UDim2.new(0.9, 0, 0, 30)
@@ -467,7 +513,6 @@ local function createGUI()
     teleportBtn.Parent = mainFrame
     applyUICorner(teleportBtn, 0.15)
     
-    -- Кнопка ауры в стиле Dragon Ball
     local auraBtn = Instance.new("TextButton")
     auraBtn.Text = "KI AURA: " .. (SETTINGS.AURA_ENABLED and "ON" or "OFF")
     auraBtn.Size = UDim2.new(0.9, 0, 0, 30)
@@ -479,7 +524,6 @@ local function createGUI()
     auraBtn.Parent = mainFrame
     applyUICorner(auraBtn, 0.15)
     
-    -- Информация о переключении меню
     local menuInfo = Instance.new("TextLabel")
     menuInfo.Text = "N - Показать/Скрыть меню"
     menuInfo.Size = UDim2.new(0.9, 0, 0, 30)
@@ -491,7 +535,6 @@ local function createGUI()
     menuInfo.Parent = mainFrame
     applyUICorner(menuInfo, 0.15)
     
-    -- Информация о высоте телепортации
     local heightInfo = Instance.new("TextLabel")
     heightInfo.Text = "TELEPORT HEIGHT: " .. SETTINGS.TELEPORT_HEIGHT
     heightInfo.Size = UDim2.new(0.9, 0, 0, 30)
@@ -503,7 +546,6 @@ local function createGUI()
     heightInfo.Parent = mainFrame
     applyUICorner(heightInfo, 0.15)
     
-    -- Обработчики кнопок
     toggleBtn.MouseButton1Click:Connect(function()
         AIM_ENABLED = not AIM_ENABLED
         toggleBtn.BackgroundColor3 = AIM_ENABLED and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
@@ -526,6 +568,7 @@ local function createGUI()
         SETTINGS.SHOW_HITBOXES = not SETTINGS.SHOW_HITBOXES
         hitboxBtn.Text = "HITBOXES: " .. (SETTINGS.SHOW_HITBOXES and "ON" or "OFF")
         hitboxBtn.BackgroundColor3 = SETTINGS.SHOW_HITBOXES and Color3.fromRGB(80, 255, 80) or Color3.fromRGB(255, 80, 80)
+        updateHitboxes()
     end)
     
     teleportBtn.MouseButton1Click:Connect(function()
@@ -544,7 +587,6 @@ local function createGUI()
         end
     end)
     
-    -- Горячие клавиши
     local keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed then
             if input.KeyCode == SETTINGS.AIM_KEY then
@@ -571,6 +613,20 @@ end
 -- Инициализация
 createGUI()
 
+-- Обработка новых игроков
+Players.PlayerAdded:Connect(function(player)
+    if SETTINGS.SHOW_HITBOXES then
+        updateHitboxes()
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if hitboxes[player] then
+        hitboxes[player]:cleanup()
+        hitboxes[player] = nil
+    end
+end)
+
 -- Очистка при выходе
 game:BindToClose(function()
     if system and system.Enabled then
@@ -578,7 +634,7 @@ game:BindToClose(function()
     end
 end)
 
-print("Система управления загружена!")
+print("Система управления с красными хитбоксами загружена!")
 print("N - Показать/Скрыть меню")
 print("T - Телепортация") 
 print("L - Вкл/Выкл прицеливание")

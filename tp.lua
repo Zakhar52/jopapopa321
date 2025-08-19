@@ -1,3 +1,17 @@
+-- Проверка и очистка предыдущей версии
+if _G.AimLockSystem then
+    _G.AimLockSystem:Destroy()
+    _G.AimLockSystem = nil
+    wait(0.1) -- Даем время на очистку
+end
+
+-- Создаем глобальную ссылку на систему
+_G.AimLockSystem = {}
+local system = _G.AimLockSystem
+
+system.Enabled = true
+system.Components = {}
+
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -36,6 +50,33 @@ local function applyUICorner(object, cornerRadius)
     return corner
 end
 
+-- Функция уничтожения системы
+function system:Destroy()
+    if self.Components.gui then
+        self.Components.gui:Destroy()
+    end
+    if self.Components.aimIndicator then
+        self.Components.aimIndicator:Destroy()
+    end
+    
+    for _, playerParts in pairs(hitboxes) do
+        for _, part in pairs(playerParts) do
+            part:Destroy()
+        end
+    end
+    
+    -- Отключаем все соединения
+    for _, connection in pairs(self.Components.connections or {}) do
+        connection:Disconnect()
+    end
+    
+    self.Enabled = false
+    _G.AimLockSystem = nil
+end
+
+-- Сохраняем компоненты в систему
+system.Components.connections = {}
+
 -- Создание 3D индикатора цели
 local function createAimIndicator()
     if aimIndicator then aimIndicator:Destroy() end
@@ -50,6 +91,8 @@ local function createAimIndicator()
     aimIndicator.Anchored = true
     aimIndicator.CanCollide = false
     aimIndicator.Parent = workspace
+    
+    system.Components.aimIndicator = aimIndicator
 end
 
 -- Создание/удаление хитбоксов
@@ -171,7 +214,7 @@ end
 
 -- Плавное наведение камеры
 local function aimAtTarget()
-    while AIM_ENABLED and RunService.RenderStepped:Wait() do
+    while AIM_ENABLED and system.Enabled and RunService.RenderStepped:Wait() do
         target = findTarget()
         
         if target then
@@ -200,8 +243,10 @@ local function createGUI()
     gui.Name = "AimLockUI"
     gui.Parent = CoreGui
     
+    system.Components.gui = gui
+    
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 320, 0, 300) -- Увеличили высоту для новых элементов
+    mainFrame.Size = UDim2.new(0, 320, 0, 300)
     mainFrame.Position = UDim2.new(0.5, -160, 0.5, -150)
     mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
     mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
@@ -298,27 +343,30 @@ local function createGUI()
     applyUICorner(heightInfo, 0.15)
     
     -- Логика перемещения окна
-    titleBar.InputBegan:Connect(function(input)
+    local dragConnection = titleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
             frameStartPos = Vector2.new(mainFrame.Position.X.Offset, mainFrame.Position.Y.Offset)
         end
     end)
+    table.insert(system.Components.connections, dragConnection)
     
-    UserInputService.InputChanged:Connect(function(input)
+    local moveConnection = UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             local mousePos = Vector2.new(input.Position.X, input.Position.Y)
             local delta = mousePos - dragStartPos
             mainFrame.Position = UDim2.new(0, frameStartPos.X + delta.X, 0, frameStartPos.Y + delta.Y)
         end
     end)
+    table.insert(system.Components.connections, moveConnection)
     
-    UserInputService.InputEnded:Connect(function(input)
+    local endConnection = UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
         end
     end)
+    table.insert(system.Components.connections, endConnection)
     
     -- Обработчики кнопок
     toggleBtn.MouseButton1Click:Connect(function()
@@ -351,7 +399,7 @@ local function createGUI()
     end)
     
     -- Горячие клавиши
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    local keyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not gameProcessed then
             if input.KeyCode == SETTINGS.AIM_KEY then
                 AIM_ENABLED = not AIM_ENABLED
@@ -368,17 +416,19 @@ local function createGUI()
             end
         end
     end)
+    table.insert(system.Components.connections, keyConnection)
 end
 
 -- Обработка новых игроков
 local function onPlayerAdded(player)
-    player.CharacterAdded:Connect(function(character)
+    local charConnection = player.CharacterAdded:Connect(function(character)
         if SETTINGS.SHOW_HITBOXES then
             updateHitboxes()
         end
     end)
+    table.insert(system.Components.connections, charConnection)
     
-    player.CharacterRemoving:Connect(function()
+    local removeConnection = player.CharacterRemoving:Connect(function()
         if hitboxes[player] then
             for _, part in pairs(hitboxes[player]) do
                 part:Destroy()
@@ -386,6 +436,7 @@ local function onPlayerAdded(player)
             hitboxes[player] = nil
         end
     end)
+    table.insert(system.Components.connections, removeConnection)
 end
 
 -- Инициализация
@@ -393,8 +444,10 @@ for _, player in ipairs(Players:GetPlayers()) do
     onPlayerAdded(player)
 end
 
-Players.PlayerAdded:Connect(onPlayerAdded)
-Players.PlayerRemoving:Connect(function(player)
+local playerAddedConnection = Players.PlayerAdded:Connect(onPlayerAdded)
+table.insert(system.Components.connections, playerAddedConnection)
+
+local playerRemovedConnection = Players.PlayerRemoving:Connect(function(player)
     if hitboxes[player] then
         for _, part in pairs(hitboxes[player]) do
             part:Destroy()
@@ -402,22 +455,15 @@ Players.PlayerRemoving:Connect(function(player)
         hitboxes[player] = nil
     end
 end)
+table.insert(system.Components.connections, playerRemovedConnection)
 
 createGUI()
 
 -- Очистка при выходе
 game:BindToClose(function()
-    if aimIndicator then
-        aimIndicator:Destroy()
-    end
-    if gui then
-        gui:Destroy()
-    end
-    for _, playerParts in pairs(hitboxes) do
-        for _, part in pairs(playerParts) do
-            part:Destroy()
-        end
+    if system and system.Enabled then
+        system:Destroy()
     end
 end)
 
-print("Расширенная система управления успешно загружена!")
+print("Система управления загружена! Повторный запуск перезапишет предыдущую версию.")
